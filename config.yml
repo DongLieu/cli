@@ -1,0 +1,34 @@
+version: 1
+validation: sovereign
+accounts: 
+- name: alice
+  coins:
+  - 20000token
+  - 200000000stake
+- name: bob
+  coins:
+  - 10000token
+  - 100000000stake
+client:
+  openapi:
+    path: docs/static/openapi.yml
+faucet:
+  name: bob
+  coins:
+  - 5token
+  - 100000stake
+validators:
+- name: alice
+  bonded: 100000000stake
+multi-node:
+  validators:
+    - name: validator1
+      stake: 100000000stake
+    - name: validator2
+      stake: 200000000stake
+    - name: validator3
+      stake: 300000000stake
+  random_validators:
+    count: 3
+    min_stake: 50000000stake
+    max_stake: 150000000stake
