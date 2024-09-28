@@ -408,9 +408,12 @@ func collectGenFiles(
 		}
 
 		nodeConfig.P2P.PersistentPeers = persistentPeers
+		nodeConfig.P2P.AllowDuplicateIP = true
 		nodeConfig.P2P.ListenAddress = "tcp://0.0.0.0:" + strconv.Itoa(26656-3*i)
 		nodeConfig.RPC.ListenAddress = "tcp://127.0.0.1:" + strconv.Itoa(26657-3*i)
 		nodeConfig.BaseConfig.ProxyApp = "tcp://127.0.0.1:" + strconv.Itoa(26658-3*i)
+		nodeConfig.Instrumentation.PrometheusListenAddr = ":" + strconv.Itoa(26660+10*i)
+		nodeConfig.Instrumentation.Prometheus = true
 		cmtconfig.WriteConfigFile(filepath.Join(nodeConfig.RootDir, "config", "config.toml"), nodeConfig)
 		if appState == nil {
 			// set the canonical application state (they should not differ)
