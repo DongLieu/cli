@@ -4,7 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"net"
+	"io"
+	"strconv"
+	"strings"
+
+	// "net"
 	"os"
 	"path/filepath"
 
@@ -100,10 +104,10 @@ Example:
 	}
 
 	addTestnetFlagsToCmd(cmd)
-	cmd.Flags().String(flagNodeDirPrefix, "node", "Prefix the directory name for each node with (node results in node0, node1, ...)")
-	cmd.Flags().String(flagNodeDaemonHome, "simd", "Home directory of the node's daemon configuration")
-	cmd.Flags().String(flagStartingIPAddress, "192.168.0.1", "Starting IP address (192.168.0.1 results in persistent peers list ID0@192.168.0.1:46656, ID1@192.168.0.2:46656, ...)")
-	cmd.Flags().String(flags.FlagKeyringBackend, flags.DefaultKeyringBackend, "Select keyring's backend (os|file|test)")
+	cmd.Flags().String(flagNodeDirPrefix, "validator", "Prefix the directory name for each node with (node results in node0, node1, ...)")
+	cmd.Flags().String(flagNodeDaemonHome, "chaintest", "Home directory of the node's daemon configuration")
+	cmd.Flags().String(flagStartingIPAddress, "localhost", "Starting IP address (192.168.0.1 results in persistent peers list ID0@192.168.0.1:46656, ID1@192.168.0.2:46656, ...)")
+	cmd.Flags().String(flags.FlagKeyringBackend, "test", "Select keyring's backend (os|file|test)")
 
 	return cmd
 }
@@ -112,7 +116,7 @@ func addTestnetFlagsToCmd(cmd *cobra.Command) {
 	cmd.Flags().Int(flagNumValidators, 4, "Number of validators to initialize the testnet with")
 	cmd.Flags().StringP(flagOutputDir, "o", "./.testnets", "Directory to store initialization data for the testnet")
 	cmd.Flags().String(flags.FlagChainID, "", "genesis file chain-id, if left blank will be randomly created")
-	cmd.Flags().String(server.FlagMinGasPrices, fmt.Sprintf("0.000006%s", sdk.DefaultBondDenom), "Minimum gas prices to accept for transactions; All fees in a tx must meet this minimum (e.g. 0.01photino,0.001stake)")
+	cmd.Flags().String(server.FlagMinGasPrices, fmt.Sprintf("0.0001%s", sdk.DefaultBondDenom), "Minimum gas prices to accept for transactions; All fees in a tx must meet this minimum (e.g. 0.01photino,0.001stake)")
 	cmd.Flags().String(flags.FlagKeyType, string(hd.Secp256k1Type), "Key signing algorithm to generate keys for")
 
 	// support old flags name for backwards compatibility
@@ -142,36 +146,36 @@ func initTestnetFiles(
 
 	simappConfig := srvconfig.DefaultConfig()
 	simappConfig.MinGasPrices = args.minGasPrices
-	simappConfig.API.Enable = true
-	simappConfig.Telemetry.Enabled = true
-	simappConfig.Telemetry.PrometheusRetentionTime = 60
+	simappConfig.API.Enable = false
+	simappConfig.BaseConfig.MinGasPrices = "0.0001" + sdk.DefaultBondDenom
 	simappConfig.Telemetry.EnableHostnameLabel = false
-	simappConfig.Telemetry.GlobalLabels = [][]string{{"chain_id", args.chainID}}
+	simappConfig.Telemetry.Enabled = false
+	simappConfig.Telemetry.PrometheusRetentionTime = 0
 
 	var (
-		genAccounts []authtypes.GenesisAccount
-		genBalances []banktypes.Balance
-		genFiles    []string
+		genAccounts     []authtypes.GenesisAccount
+		genBalances     []banktypes.Balance
+		genFiles        []string
+		persistentPeers string
+		gentxsFiles     []string
 	)
 
 	inBuf := bufio.NewReader(cmd.InOrStdin())
 	// generate private keys, node IDs, and initial transactions
 	for i := 0; i < args.numValidators; i++ {
+		// validator1
 		nodeDirName := fmt.Sprintf("%s%d", args.nodeDirPrefix, i)
-		nodeDir := filepath.Join(args.outputDir, nodeDirName, args.nodeDaemonHome)
-		gentxsDir := filepath.Join(args.outputDir, "gentxs")
+		// ../validator1
+		nodeDir := filepath.Join(args.outputDir, nodeDirName)
+		// ../validator1/config/gentx/
+		gentxsDir := filepath.Join(args.outputDir, nodeDirName, "config", "gentx")
 
 		nodeConfig.SetRoot(nodeDir)
 		nodeConfig.Moniker = nodeDirName
-		nodeConfig.RPC.ListenAddress = "tcp://0.0.0.0:26657"
+		nodeConfig.RPC.ListenAddress = "tcp://0.0.0.0:" + strconv.Itoa(26657-3*i)
 
+		var err error
 		if err := os.MkdirAll(filepath.Join(nodeDir, "config"), nodeDirPerm); err != nil {
-			_ = os.RemoveAll(args.outputDir)
-			return err
-		}
-
-		ip, err := getIP(i, args.startingIPAddress)
-		if err != nil {
 			_ = os.RemoveAll(args.outputDir)
 			return err
 		}
@@ -182,7 +186,14 @@ func initTestnetFiles(
 			return err
 		}
 
-		memo := fmt.Sprintf("%s@%s:26656", nodeIDs[i], ip)
+		memo := fmt.Sprintf("%s@%s:"+strconv.Itoa(26656-3*i), nodeIDs[i], args.startingIPAddress)
+
+		if persistentPeers == "" {
+			persistentPeers = memo
+		} else {
+			persistentPeers = persistentPeers + "," + memo
+		}
+
 		genFiles = append(genFiles, nodeConfig.GenesisFile())
 
 		kb, err := keyring.New(sdk.KeyringServiceName(), args.keyringBackend, nodeDir, inBuf, clientCtx.Codec)
@@ -210,7 +221,8 @@ func initTestnetFiles(
 		}
 
 		// save private key seed words
-		if err := writeFile(fmt.Sprintf("%v.json", "key_seed"), nodeDir, cliPrint); err != nil {
+		file := filepath.Join(nodeDir, fmt.Sprintf("%v.json", "key_seed"))
+		if err := writeFile(file, nodeDir, cliPrint); err != nil {
 			return err
 		}
 
@@ -259,21 +271,38 @@ func initTestnetFiles(
 		if err != nil {
 			return err
 		}
-
-		if err := writeFile(fmt.Sprintf("%v.json", nodeDirName), gentxsDir, txBz); err != nil {
+		file = filepath.Join(gentxsDir, fmt.Sprintf("%v.json", "gentx-"+nodeIDs[i]))
+		gentxsFiles = append(gentxsFiles, file)
+		if err := writeFile(file, gentxsDir, txBz); err != nil {
 			return err
 		}
 
+		simappConfig.GRPC.Address = args.startingIPAddress + ":" + strconv.Itoa(9090-2*i)
+		simappConfig.API.Address = "tcp://localhost:" + strconv.Itoa(1317-i)
 		srvconfig.WriteConfigFile(filepath.Join(nodeDir, "config", "app.toml"), simappConfig)
 	}
 
 	if err := initGenFiles(clientCtx, mbm, args.chainID, genAccounts, genBalances, genFiles, args.numValidators); err != nil {
 		return err
 	}
+	for i := 0; i < args.numValidators; i++ {
+		for _, file := range gentxsFiles {
+			nodeDirName := fmt.Sprintf("%s%d", args.nodeDirPrefix, i)
+			nodeDir := filepath.Join(args.outputDir, nodeDirName)
+			gentxsDir := filepath.Join(nodeDir, "config", "gentx")
 
+			yes, err := isSubDir(file, gentxsDir)
+			if err != nil || yes {
+				continue
+			}
+			copyFile(file, gentxsDir)
+		}
+	}
 	err := collectGenFiles(
 		clientCtx, nodeConfig, args.chainID, nodeIDs, valPubKeys, args.numValidators,
-		args.outputDir, args.nodeDirPrefix, args.nodeDaemonHome, genBalIterator, clientCtx.TxConfig.SigningContext().ValidatorAddressCodec(),
+		args.outputDir, args.nodeDirPrefix, genBalIterator,
+		clientCtx.TxConfig.SigningContext().ValidatorAddressCodec(),
+		persistentPeers,
 	)
 	if err != nil {
 		return err
@@ -283,33 +312,7 @@ func initTestnetFiles(
 	return nil
 }
 
-func getIP(i int, startingIPAddr string) (ip string, err error) {
-	if len(startingIPAddr) == 0 {
-		ip, err = server.ExternalIP()
-		if err != nil {
-			return "", err
-		}
-		return ip, nil
-	}
-	return calculateIP(startingIPAddr, i)
-}
-
-func calculateIP(ip string, i int) (string, error) {
-	ipv4 := net.ParseIP(ip).To4()
-	if ipv4 == nil {
-		return "", fmt.Errorf("%v: non ipv4 address", ip)
-	}
-
-	for j := 0; j < i; j++ {
-		ipv4[3]++
-	}
-
-	return ipv4.String(), nil
-}
-
-func writeFile(name string, dir string, contents []byte) error {
-	file := filepath.Join(dir, name)
-
+func writeFile(file, dir string, contents []byte) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("could not create directory %q: %w", dir, err)
 	}
@@ -373,15 +376,16 @@ func initGenFiles(
 func collectGenFiles(
 	clientCtx client.Context, nodeConfig *cmtconfig.Config, chainID string,
 	nodeIDs []string, valPubKeys []cryptotypes.PubKey, numValidators int,
-	outputDir, nodeDirPrefix, nodeDaemonHome string, genBalIterator banktypes.GenesisBalancesIterator, valAddrCodec runtime.ValidatorAddressCodec,
+	outputDir, nodeDirPrefix string, genBalIterator banktypes.GenesisBalancesIterator,
+	valAddrCodec runtime.ValidatorAddressCodec, persistentPeers string,
 ) error {
 	var appState json.RawMessage
 	genTime := tmtime.Now()
 
 	for i := 0; i < numValidators; i++ {
 		nodeDirName := fmt.Sprintf("%s%d", nodeDirPrefix, i)
-		nodeDir := filepath.Join(outputDir, nodeDirName, nodeDaemonHome)
-		gentxsDir := filepath.Join(outputDir, "gentxs")
+		nodeDir := filepath.Join(outputDir, nodeDirName)
+		gentxsDir := filepath.Join(nodeDir, "config", "gentx")
 		nodeConfig.Moniker = nodeDirName
 
 		nodeConfig.SetRoot(nodeDir)
@@ -391,15 +395,23 @@ func collectGenFiles(
 
 		appGenesis, err := genutiltypes.AppGenesisFromFile(nodeConfig.GenesisFile())
 		if err != nil {
+			fmt.Println("99999", nodeConfig.Genesis)
+			fmt.Println("99999", nodeConfig.RootDir)
 			return err
 		}
 
 		nodeAppState, err := genutil.GenAppStateFromConfig(clientCtx.Codec, clientCtx.TxConfig, nodeConfig, initCfg, appGenesis, genBalIterator, genutiltypes.DefaultMessageValidator,
 			valAddrCodec)
 		if err != nil {
+			fmt.Println("8888")
 			return err
 		}
 
+		nodeConfig.P2P.PersistentPeers = persistentPeers
+		nodeConfig.P2P.ListenAddress = "tcp://0.0.0.0:" + strconv.Itoa(26656-3*i)
+		nodeConfig.RPC.ListenAddress = "tcp://127.0.0.1:" + strconv.Itoa(26657-3*i)
+		nodeConfig.BaseConfig.ProxyApp = "tcp://127.0.0.1:" + strconv.Itoa(26658-3*i)
+		cmtconfig.WriteConfigFile(filepath.Join(nodeConfig.RootDir, "config", "config.toml"), nodeConfig)
 		if appState == nil {
 			// set the canonical application state (they should not differ)
 			appState = nodeAppState
@@ -414,4 +426,63 @@ func collectGenFiles(
 	}
 
 	return nil
+}
+
+func copyFile(src, dstDir string) (int64, error) {
+	// Extract the file name from the source path
+	fileName := filepath.Base(src)
+
+	// Create the full destination path (directory + file name)
+	dst := filepath.Join(dstDir, fileName)
+
+	// Open the source file
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer sourceFile.Close()
+
+	// Create the destination file
+	destinationFile, err := os.Create(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer destinationFile.Close()
+
+	// Copy content from the source file to the destination file
+	bytesCopied, err := io.Copy(destinationFile, sourceFile)
+	if err != nil {
+		return 0, err
+	}
+
+	// Ensure the content is written to the destination file
+	err = destinationFile.Sync()
+	if err != nil {
+		return 0, err
+	}
+
+	return bytesCopied, nil
+}
+
+// isSubDir checks if dstDir is a parent directory of src
+func isSubDir(src, dstDir string) (bool, error) {
+	// Get the absolute path of src and dstDir
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		return false, err
+	}
+	absDstDir, err := filepath.Abs(dstDir)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if absSrc is within absDstDir
+	relativePath, err := filepath.Rel(absDstDir, absSrc)
+	if err != nil {
+		return false, err
+	}
+
+	// If the relative path doesn't go up the directory tree (doesn't contain ".."), it is inside dstDir
+	isInside := !strings.HasPrefix(relativePath, "..") && !filepath.IsAbs(relativePath)
+	return isInside, nil
 }

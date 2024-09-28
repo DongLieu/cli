@@ -159,10 +159,10 @@ sed -i -E "s|persistent_peers = \"\"|persistent_peers = \"$node1@localhost:26656
 
 # # start all three validators/
 # chaintestd start --home=$HOME/.chaintestd/validator1
-screen -S chaintestd1 -t chaintestd1 -d -m chaintestd start --home=$HOME/.chaintestd/validator1
-screen -S chaintestd2 -t chaintestd2 -d -m chaintestd start --home=$HOME/.chaintestd/validator2
-screen -S chaintestd3 -t chaintestd3 -d -m chaintestd start --home=$HOME/.chaintestd/validator3
-screen -S chaintestd4 -t chaintestd4 -d -m chaintestd start --home=$HOME/.chaintestd/validator4
+# screen -S chaintestd1 -t chaintestd1 -d -m chaintestd start --home=$HOME/.chaintestd/validator1
+# screen -S chaintestd2 -t chaintestd2 -d -m chaintestd start --home=$HOME/.chaintestd/validator2
+# screen -S chaintestd3 -t chaintestd3 -d -m chaintestd start --home=$HOME/.chaintestd/validator3
+# screen -S chaintestd4 -t chaintestd4 -d -m chaintestd start --home=$HOME/.chaintestd/validator4
 # chaintestd start --home=$HOME/.chaintestd/validator3
 
 sleep 7
