@@ -41,25 +41,25 @@ import (
 )
 
 var (
-	flagNodeDirPrefix     = "node-dir-prefix"
-	flagNumValidators     = "v"
-	flagOutputDir         = "output-dir"
-	flagNodeDaemonHome    = "node-daemon-home"
-	flagStartingIPAddress = "starting-ip-address"
+	flagNodeDirPrefix         = "node-dir-prefix"
+	flagNumValidators         = "v"
+	flagOutputDir             = "output-dir"
+	flagValidatorsStakeAmount = "validators-stake-amount"
+	flagStartingIPAddress     = "starting-ip-address"
 )
 
 const nodeDirPerm = 0o755
 
 type initArgs struct {
-	algo              string
-	chainID           string
-	keyringBackend    string
-	minGasPrices      string
-	nodeDaemonHome    string
-	nodeDirPrefix     string
-	numValidators     int
-	outputDir         string
-	startingIPAddress string
+	algo                   string
+	chainID                string
+	keyringBackend         string
+	minGasPrices           string
+	nodeDirPrefix          string
+	numValidators          int
+	outputDir              string
+	startingIPAddress      string
+	validatorsStakesAmount map[int]sdk.Coin
 }
 
 // NewTestnetMultiNodeCmd returns a cmd to initialize all files for tendermint testnet and application
@@ -76,7 +76,7 @@ or a similar setup where each node has a manually configurable IP address.
 Note, strict routability for addresses is turned off in the config file.
 
 Example:
-	appd testnet init-files --v 4 --output-dir ./.testnets --starting-ip-address 192.168.10.2
+	appd multi-node --v 4 --output-dir ./.testnets --validators-stake-amount 1000000,200000,300000,400000
 	`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			clientCtx, err := client.GetClientQueryContext(cmd)
@@ -93,10 +93,24 @@ Example:
 			args.chainID, _ = cmd.Flags().GetString(flags.FlagChainID)
 			args.minGasPrices, _ = cmd.Flags().GetString(server.FlagMinGasPrices)
 			args.nodeDirPrefix, _ = cmd.Flags().GetString(flagNodeDirPrefix)
-			args.nodeDaemonHome, _ = cmd.Flags().GetString(flagNodeDaemonHome)
 			args.startingIPAddress, _ = cmd.Flags().GetString(flagStartingIPAddress)
 			args.numValidators, _ = cmd.Flags().GetInt(flagNumValidators)
 			args.algo, _ = cmd.Flags().GetString(flags.FlagKeyType)
+
+			args.validatorsStakesAmount = make(map[int]sdk.Coin)
+			top := 0
+			// If the flag string is invalid, the amount will default to 100000000.
+			if s, err := cmd.Flags().GetString(flagValidatorsStakeAmount); err == nil {
+				for _, amount := range strings.Split(s, ",") {
+					a, ok := math.NewIntFromString(amount)
+					if !ok {
+						continue
+					}
+					args.validatorsStakesAmount[top] = sdk.NewCoin(sdk.DefaultBondDenom, a)
+					top += 1
+				}
+
+			}
 
 			return initTestnetFiles(clientCtx, cmd, config, mbm, genBalIterator, args)
 		},
@@ -104,7 +118,7 @@ Example:
 
 	addTestnetFlagsToCmd(cmd)
 	cmd.Flags().String(flagNodeDirPrefix, "validator", "Prefix the directory name for each node with (node results in node0, node1, ...)")
-	cmd.Flags().String(flagNodeDaemonHome, "chaintest", "Home directory of the node's daemon configuration")
+	cmd.Flags().String(flagValidatorsStakeAmount, "100000000,100000000,100000000,100000000", "Amount of stake for each validator")
 	cmd.Flags().String(flagStartingIPAddress, "localhost", "Starting IP address (192.168.0.1 results in persistent peers list ID0@192.168.0.1:46656, ID1@192.168.0.2:46656, ...)")
 	cmd.Flags().String(flags.FlagKeyringBackend, "test", "Select keyring's backend (os|file|test)")
 
@@ -235,11 +249,15 @@ func initTestnetFiles(
 		genBalances = append(genBalances, banktypes.Balance{Address: addr.String(), Coins: coins.Sort()})
 		genAccounts = append(genAccounts, authtypes.NewBaseAccount(addr, nil, 0, 0))
 
-		valTokens := sdk.TokensFromConsensusPower(100, sdk.DefaultPowerReduction)
+		var valTokens sdk.Coin
+		valTokens, ok := args.validatorsStakesAmount[i]
+		if !ok {
+			valTokens = sdk.NewCoin(sdk.DefaultBondDenom, sdk.TokensFromConsensusPower(100, sdk.DefaultPowerReduction))
+		}
 		createValMsg, err := stakingtypes.NewMsgCreateValidator(
 			sdk.ValAddress(addr).String(),
 			valPubKeys[i],
-			sdk.NewCoin(sdk.DefaultBondDenom, valTokens),
+			valTokens,
 			stakingtypes.NewDescription(nodeDirName, "", "", "", ""),
 			stakingtypes.NewCommissionRates(math.LegacyOneDec(), math.LegacyOneDec(), math.LegacyOneDec()),
 			math.OneInt(),
