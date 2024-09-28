@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	// "net"
 	"os"
 	"path/filepath"
 
@@ -317,7 +316,7 @@ func writeFile(file, dir string, contents []byte) error {
 		return fmt.Errorf("could not create directory %q: %w", dir, err)
 	}
 
-	if err := os.WriteFile(file, contents, 0o644); err != nil { //nolint: gosec
+	if err := os.WriteFile(file, contents, 0o644); err != nil {
 		return err
 	}
 
@@ -395,15 +394,12 @@ func collectGenFiles(
 
 		appGenesis, err := genutiltypes.AppGenesisFromFile(nodeConfig.GenesisFile())
 		if err != nil {
-			fmt.Println("99999", nodeConfig.Genesis)
-			fmt.Println("99999", nodeConfig.RootDir)
 			return err
 		}
 
 		nodeAppState, err := genutil.GenAppStateFromConfig(clientCtx.Codec, clientCtx.TxConfig, nodeConfig, initCfg, appGenesis, genBalIterator, genutiltypes.DefaultMessageValidator,
 			valAddrCodec)
 		if err != nil {
-			fmt.Println("8888")
 			return err
 		}
 
@@ -412,7 +408,7 @@ func collectGenFiles(
 		nodeConfig.P2P.ListenAddress = "tcp://0.0.0.0:" + strconv.Itoa(26656-3*i)
 		nodeConfig.RPC.ListenAddress = "tcp://127.0.0.1:" + strconv.Itoa(26657-3*i)
 		nodeConfig.BaseConfig.ProxyApp = "tcp://127.0.0.1:" + strconv.Itoa(26658-3*i)
-		nodeConfig.Instrumentation.PrometheusListenAddr = ":" + strconv.Itoa(26660+10*i)
+		nodeConfig.Instrumentation.PrometheusListenAddr = ":" + strconv.Itoa(26660+i)
 		nodeConfig.Instrumentation.Prometheus = true
 		cmtconfig.WriteConfigFile(filepath.Join(nodeConfig.RootDir, "config", "config.toml"), nodeConfig)
 		if appState == nil {
